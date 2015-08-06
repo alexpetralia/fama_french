@@ -14,10 +14,10 @@ shinyServer(function(input, output) {
   #       DEBUGGING        #
   ##########################
   
-  setwd("C:/Users/apetralia/Desktop/app")
-  beg <- "1990-01-01"
-  end <- "2012-12-31"
-  fname <- "FF_monthly.csv"
+#   setwd("C:/Users/apetralia/Desktop/app")
+#   beg <- "1990-01-01"
+#   end <- "2012-12-31"
+#   fname <- "FF_monthly.csv"
   
   ##########################
   #       PROCESSING       #
