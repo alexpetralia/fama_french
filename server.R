@@ -103,8 +103,10 @@ shinyServer(function(input, output) {
     required_returns <- list("ff3_ret" = ff3_ret*100, "capm_ret" = capm_ret*100, "rf" = rf_avg, "betas" = betas) # convert to percentages
     return(required_returns)
     
-    # scatterplot + R^2 overlay //////////////////////////////
-    # a measure for momentum? google it. //////////////////////////////
+    # scatterplot (of what?) + R^2 label overlay //////////////////////////////
+    # a measure for momentum? google it. google other important financial ratios //////////////////////////////
+    # fix excess return and time period issues (pending email question)  //////////////////////////////
+    # add real/nominal functionality  //////////////////////////////
   })
 
   combined_disp <- reactive({
@@ -180,9 +182,4 @@ shinyServer(function(input, output) {
       p(paste("Market beta: ", regr_rd$mkt_beta, "; ", "SMB beta: ", regr_rd$smb_beta, "; ", "HML beta: ", regr_rd$hml_beta, sep=""))
     )
   })
-  
-  # How can I fix the HTML output? # names(tags) -> fix links, emphasis //////////////////////  
-    
-    # Can you describe skewness? kurtosis? what do they mean for securities? What's good and what's bad?
-    # Can you explain R^2?
 })
