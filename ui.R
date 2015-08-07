@@ -82,7 +82,7 @@ shinyUI(fluidPage(
                a("CAPM vs Fama-French models in explaining stock market variability", href="/"), br(),
                a("Calculating Sortino ratio", href="/"), br(),
                a("R Shiny documentation", href="/"), br(),
-               p("Professor Sebastien Betermier, McGill University")
+               # p("Professor Sebastien Betermier, McGill University (need to ask permission)")
                
                # is there a method for HTML LaTEX markup for mathematical calculations? Can I insert <beta> symbol and super/subscripts?
         ),

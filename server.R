@@ -18,6 +18,12 @@ shinyServer(function(input, output) {
 #   beg <- "1990-01-01"
 #   end <- "2012-12-31"
 #   fname <- "FF_monthly.csv"
+
+  #####################################
+  #       SERVER-SIDE (LINUX EC2)     #
+  #####################################
+
+#   setwd("/var/shiny-server/www/fama_french/")
   
   ##########################
   #       PROCESSING       #
