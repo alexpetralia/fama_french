@@ -17,7 +17,7 @@ shinyServer(function(input, output) {
 #   setwd("C:/Users/apetralia/Desktop/app")
 #   beg <- "1990-01-01"
 #   end <- "2012-12-31"
-#   fname <- "FF_monthly.csv"
+#   fname <- "FF_monthly.CSV"
 
   #####################################
   #       SERVER-SIDE (LINUX EC2)     #
@@ -31,7 +31,7 @@ shinyServer(function(input, output) {
   
   # CHANGE FREQUENCY OF FF DATA
   FF <- reactive({
-    fname <- paste("FF_", input$freq, ".csv", sep="")
+    fname <- paste("FF_", input$freq, ".CSV", sep="")
     data <- read.csv(fname)
     
     if (input$freq == "monthly") { # ascribe end of month trading date to Monthly data
@@ -84,6 +84,7 @@ shinyServer(function(input, output) {
     data <- combined()
     
     mkt_regr <- lm(data[,"stock"] ~ data[,"Mkt.RF"], na.action=na.omit)
+    mkt_alpha <- mkt_regr$coef[1]
     mkt_beta <- mkt_regr$coef[2]
     mkt_r2 <- summary(mkt_regr)$r.squared
     
@@ -104,12 +105,12 @@ shinyServer(function(input, output) {
     ff3_ret <- rf_avg + (mkt_beta*mkt_factor_prem) + (smb_beta*smb_factor_prem) + (hml_beta*hml_factor_prem)
     capm_ret <- rf_avg + (mkt_beta*mkt_factor_prem) # mkt_factor_prem should be EXCESS ret
     
+    mkt_regr <- c("mkt_alpha" = mkt_alpha, "mkt_r2" = mkt_r2)
     betas <- c("mkt_beta" = mkt_beta, "smb_beta" = smb_beta, "hml_beta" = hml_beta)
     
-    required_returns <- list("ff3_ret" = ff3_ret*100, "capm_ret" = capm_ret*100, "rf" = rf_avg, "betas" = betas) # convert to percentages
+    required_returns <- list("ff3_ret" = ff3_ret*100, "capm_ret" = capm_ret*100, "rf" = rf_avg, "betas" = betas, "mkt_regr" = mkt_regr) # convert to percentages
     return(required_returns)
     
-    # scatterplot (of what?) + R^2 label overlay //////////////////////////////
     # a measure for momentum? google it. google other important financial ratios //////////////////////////////
     # fix excess return and time period issues (pending email question)  //////////////////////////////
     # add real/nominal functionality  //////////////////////////////
@@ -136,17 +137,44 @@ shinyServer(function(input, output) {
       tail <- tail(data, 0) }
     
     both <- list("head" = head, "tail" = tail)
-    return(both)
-    
-    
+    return(both)    
   })
 
   ######################
   #      OUTPUTS       #
   ######################
+
+  ggplot_theme <- theme( # https://github.com/jrnold/ggthemes
+    panel.background = element_rect(fill = '#F3ECE2'), 
+    plot.background = element_rect(fill = '#F3ECE2'), 
+    panel.grid.major = element_line(color = "#DFDDDA"), 
+    panel.grid.minor = element_line(color = "#DFDDDA"),
+    axis.title.x = element_text(color = "#B2B0AE"),
+    axis.title.y = element_text(color = "#B2B0AE") )
   
-  output$plot <- renderPlot({
-    p <- ggplot(combined(), aes(x = stock)) + geom_histogram(binwidth=.01) + geom_density(color="red", fill="white", alpha=.03) + theme(axis.title.x = element_blank())
+  output$histogram <- renderPlot({
+    p <- ggplot(combined(), aes(x = stock)) + 
+      geom_histogram(binwidth=.005, fill = "#383837") + 
+      geom_density(color="blue", fill="white", alpha=.03) + 
+      scale_x_continuous(labels=percent) + 
+      scale_y_discrete(breaks=pretty_breaks()) + 
+      labs(x = paste(input$ticker, " returns"), y = "observations") + 
+      ggplot_theme
+    print(p)
+  })
+
+  output$scatterplot <- renderPlot({
+    regr <- regression()
+    regr <- c(regr, unlist(regr$betas), unlist(regr$mkt_regr))
+    regr_rd <- lapply(regr, function(x){ format(round(x, 2), nsmall = 2) })
+    
+    p <- ggplot(combined(), aes(x = Mkt.RF, y = stock)) + geom_point(color = "#383837") +
+      geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) +
+      scale_x_continuous(labels=percent) + 
+      scale_y_continuous(labels=percent) + 
+      labs(x = paste("market returns\n\n", paste("model: y = ", regr_rd$mkt_alpha, " + ", regr_rd$mkt_beta, "x + (e) | R^2 = ", regr_rd$mkt_r2, sep ="")), 
+           y = paste(input$ticker, " returns")) + 
+      ggplot_theme
     print(p)
   })
   

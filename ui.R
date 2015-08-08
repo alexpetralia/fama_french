@@ -31,12 +31,18 @@ shinyUI(fluidPage(
   mainPanel(
     
     tabsetPanel(position=c("right"),
-      tabPanel(strong("Plot"), 
-               plotOutput("plot"),
+      tabPanel(strong("Plots"), 
+               br(),
+               plotOutput("histogram"),
+               plotOutput("scatterplot"),
+               br(),
                htmlOutput("metrics")),
       
       tabPanel(strong("Table"), 
+               br(),
                tableOutput("table_head"),
+               p("..."),
+               br(),
                tableOutput("table_tail"),
                code("Displays no more than 200 rows.")),
       
@@ -81,7 +87,7 @@ shinyUI(fluidPage(
                a("Calculating Fama-French 3", href="/"), br(),
                a("CAPM vs Fama-French models in explaining stock market variability", href="/"), br(),
                a("Calculating Sortino ratio", href="/"), br(),
-               a("R Shiny documentation", href="/"), br(),
+               a("R Shiny documentation", href="/"), br()
                # p("Professor Sebastien Betermier, McGill University (need to ask permission)")
                
                # is there a method for HTML LaTEX markup for mathematical calculations? Can I insert <beta> symbol and super/subscripts?
