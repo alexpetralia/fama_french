@@ -7,6 +7,7 @@ library(plyr)
 library(RQuantLib)
 library(quantmod)
 library(e1071)
+library(gridExtra)
 
 shinyServer(function(input, output) {
   
@@ -77,47 +78,55 @@ shinyServer(function(input, output) {
     names(data)[names(data) == "Adj.Close"] <- "stock"
     data$stock <- data$stock[1:length(data$stock)]
     
+    data['Mkt.Excess'] = data['Mkt.RF'] - data['RF']
+    data['stock.Excess'] = data['stock'] - data['RF']
+    
     return(data)
   })
 
   regression <- reactive({
     data <- combined()
     
-    mkt_regr <- lm(data[,"stock"] ~ data[,"Mkt.RF"], na.action=na.omit)
+    mkt_regr <- lm(data[,"stock.Excess"] ~ data[,"Mkt.Excess"], na.action=na.omit)
     mkt_alpha <- mkt_regr$coef[1]
     mkt_beta <- mkt_regr$coef[2]
     mkt_r2 <- summary(mkt_regr)$r.squared
     
-    smb_regr <- lm(data[,"stock"] ~ data[,"SMB"], na.action=na.omit)
+    smb_regr <- lm(data[,"stock.Excess"] ~ data[,"SMB"], na.action=na.omit)
+    smb_alpha <- smb_regr$coef[1]
     smb_beta <- smb_regr$coef[2]
     smb_r2 <- summary(smb_regr)$r.squared
     
-    hml_regr <- lm(data[,"stock"] ~ data[,"HML"], na.action=na.omit)
+    hml_regr <- lm(data[,"stock.Excess"] ~ data[,"HML"], na.action=na.omit)
+    hml_alpha <- hml_regr$coef[1]
     hml_beta <- hml_regr$coef[2]
     hml_r2 <- summary(hml_regr)$r.squared
     
-    mkt_factor_prem <- mean(data[, "Mkt.RF"])
+    mkt_factor_prem <- mean(data[, "Mkt.Excess"])
     smb_factor_prem <- mean(data[, "SMB"])
     hml_factor_prem <- mean(data[, "HML"])
     
-    rf_avg <- mean(data[, "RF"])
+    rf_avg <- mean(data[, "RF"]) # THIS SHOULD BE CURRENT RF VALUE, NOT AN AVERAGE
     
     ff3_ret <- rf_avg + (mkt_beta*mkt_factor_prem) + (smb_beta*smb_factor_prem) + (hml_beta*hml_factor_prem)
-    capm_ret <- rf_avg + (mkt_beta*mkt_factor_prem) # mkt_factor_prem should be EXCESS ret
+    capm_ret <- rf_avg + (mkt_beta*mkt_factor_prem)
     
-    mkt_regr <- c("mkt_alpha" = mkt_alpha, "mkt_r2" = mkt_r2)
-    betas <- c("mkt_beta" = mkt_beta, "smb_beta" = smb_beta, "hml_beta" = hml_beta)
+    stats <- list("ff3_ret" = ff3_ret*100, "capm_ret" = capm_ret*100, "rf" = rf_avg, "mkt_beta" = mkt_beta, "smb_beta" = smb_beta, "hml_beta" = hml_beta, "mkt_alpha" = mkt_alpha, "mkt_r2" = mkt_r2, "smb_alpha" = smb_alpha, "smb_r2" = smb_r2, "hml_alpha" = hml_alpha, "hml_r2" = hml_r2) # convert to percentages    
+    stats_rd <- lapply(stats, function(x){ format(round(x, 2), nsmall = 2) })
     
-    required_returns <- list("ff3_ret" = ff3_ret*100, "capm_ret" = capm_ret*100, "rf" = rf_avg, "betas" = betas, "mkt_regr" = mkt_regr) # convert to percentages
-    return(required_returns)
+    return(stats_rd)
     
     # a measure for momentum? google it. google other important financial ratios //////////////////////////////
-    # fix excess return and time period issues (pending email question)  //////////////////////////////
+    # cokurtosis? coskewness?
+    # model efficacy for fama-french? r^2?
     # add real/nominal functionality  //////////////////////////////
   })
 
   combined_disp <- reactive({
     data <- combined()
+    data$stock.Excess <- NULL
+    data$Mkt.Excess <- NULL
+    
     names(data)[names(data) == "stock"] <- input$ticker
     names(data)[names(data) == "Mkt.RF"] <- "Market"
     names(data)[names(data) == "RF"] <- "Risk-free"
@@ -141,7 +150,7 @@ shinyServer(function(input, output) {
   })
 
   ######################
-  #      OUTPUTS       #
+  #      THEMES        #
   ######################
 
   ggplot_theme <- theme( # https://github.com/jrnold/ggthemes
@@ -151,6 +160,10 @@ shinyServer(function(input, output) {
     panel.grid.minor = element_line(color = "#DFDDDA"),
     axis.title.x = element_text(color = "#B2B0AE"),
     axis.title.y = element_text(color = "#B2B0AE") )
+
+  ######################
+  #      OUTPUTS       #
+  ######################
   
   output$histogram <- renderPlot({
     p <- ggplot(combined(), aes(x = stock)) + 
@@ -165,55 +178,105 @@ shinyServer(function(input, output) {
 
   output$scatterplot <- renderPlot({
     regr <- regression()
-    regr <- c(regr, unlist(regr$betas), unlist(regr$mkt_regr))
-    regr_rd <- lapply(regr, function(x){ format(round(x, 2), nsmall = 2) })
     
-    p <- ggplot(combined(), aes(x = Mkt.RF, y = stock)) + geom_point(color = "#383837") +
+    mkt_plot <- ggplot(combined(), aes(x = Mkt.Excess, y = stock.Excess)) + geom_point(color = "#383837") +
       geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) +
       scale_x_continuous(labels=percent) + 
       scale_y_continuous(labels=percent) + 
-      labs(x = paste("market returns\n\n", paste("model: y = ", regr_rd$mkt_alpha, " + ", regr_rd$mkt_beta, "x + (e) | R^2 = ", regr_rd$mkt_r2, sep ="")), 
-           y = paste(input$ticker, " returns")) + 
+      labs(x = paste("excess market returns\n\n", "model: y = ", regr$mkt_alpha, " + ", regr$mkt_beta, "x + (e) | R^2 = ", regr$mkt_r2, sep =""), 
+           y = paste("excess", input$ticker, "returns")) + 
       ggplot_theme
-    print(p)
+    
+    smb_plot <- ggplot(combined(), aes(x = SMB, y = stock.Excess)) + geom_point(color = "#383837") +
+      geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) + 
+      scale_x_continuous(labels=percent) + 
+      scale_y_continuous(labels=percent) + 
+      labs(x = paste("SMB returns\n\n", "model: y = ", regr$smb_alpha, " + ", regr$smb_beta, "x + (e) | R^2 = ", regr$smb_r2, sep =""), 
+           y = paste("excess", input$ticker, "returns")) + 
+      ggplot_theme
+    
+    hml_plot <- ggplot(combined(), aes(x = HML, y = stock.Excess)) + geom_point(color = "#383837") +
+      geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) + 
+      scale_x_continuous(labels=percent) + 
+      scale_y_continuous(labels=percent) + 
+      labs(x = paste("HML returns\n\n", "model: y = ", regr$hml_alpha, " + ", regr$hml_beta, "x + (e) | R^2 = ", regr$hml_r2, sep =""), 
+           y = paste("excess", input$ticker, "returns")) + 
+      ggplot_theme
+    
+    grid.arrange(mkt_plot, smb_plot, hml_plot, ncol=3)
   })
-  
-  output$table_head <- renderTable({
-    combined_disp()$head    
-  },
-    include.rownames = FALSE)
-
-  output$table_tail <- renderTable({
-    if (length(combined_disp()) == 2) {# ie. tail table exists
-        combined_disp()$tail 
-    }
-      },
-      include.rownames = FALSE,
-      include.colnames = FALSE)
 
   output$metrics <- renderUI({
     regr <- regression()
-    regr <- c(regr, unlist(regr$betas))
-    regr_rd <- lapply(regr, function(x){ format(round(x, 2), nsmall = 2) })
-    
+        
     stock <- combined()$stock
-    stats <- c("mean" = mean(stock)*100, "median" = median(stock)*100, "stdev" = sd(stock)*100, "skewness" = skewness(stock), "kurtosis" = kurtosis(stock)-3, "sharpe" = (mean(stock) - regr$rf)/sd(stock)) # convert to percentages
+    stats <- c("mean" = mean(stock)*100, "median" = median(stock)*100, "stdev" = sd(stock)*100, "skewness" = skewness(stock), "kurtosis" = kurtosis(stock)-3) # convert to percentages
     stats_rd <- lapply(stats, function(x){ format(round(x, 2), nsmall = 2) })
-    
-    div(
+  
+    div(   
       strong(p("Measures of central tendency")),
-      p(paste("Mean (", input$freq, "): ", stats_rd$mean, "%", sep="")),
-      p(paste("Median (", input$freq, "): ", stats_rd$median, "%", sep="")),
-      p(paste("Standard deviation: ", stats_rd$stdev, "%", sep="")),
-      p(paste("Skewness: ", stats_rd$skewness, sep="")),
-      p(paste("Excess kurtosis: ", stats_rd$kurtosis, sep="")),
+      
+      tags$table(
+        tags$tbody(
+          tags$tr(
+            tags$td(paste("Mean (", input$freq, "): ", sep="")),
+            tags$td(paste(stats_rd$mean, "%", sep="")) ),
+          tags$tr(
+            tags$td(paste("Median (", input$freq, "): ", sep="")),
+            tags$td(paste(stats_rd$median, "%", sep="")) ),
+          tags$tr(
+            tags$td(paste("Standard deviation (", input$freq, "): ",  sep="")),
+            tags$td(paste(stats_rd$stdev, "%", sep="")) ),
+          tags$tr(
+            tags$td(paste("Skewness (", input$freq, "): ",  sep="")),
+            tags$td(stats_rd$skewness) ),
+          tags$tr(
+            tags$td(paste("Excess kurtosis (", input$freq, "): ",  sep="")),
+            tags$td(stats_rd$kurtosis) )
+          )
+        ),
+      
       br(),
+      
       strong(p("Financial metrics")),
-      p(paste("CAPM required return (", input$freq, "): ", regr_rd$capm_ret, "%", sep="")),
-      p(paste("Fama-French 3 Factor required return (", input$freq, "): ", regr_rd$ff3_ret, "%", sep="")),
-      p(paste("Sharpe ratio: ", stats_rd$sharpe, sep=""), span(" INCORRECT b/c must annualize return", style="color:red")),
-      p(paste("Sortino ratio: ", "N/A", sep="")),
-      p(paste("Market beta: ", regr_rd$mkt_beta, "; ", "SMB beta: ", regr_rd$smb_beta, "; ", "HML beta: ", regr_rd$hml_beta, sep=""))
-    )
-  })
+      
+      tags$table(
+        tags$tbody(
+          tags$tr(
+            tags$td(paste("CAPM required return (", input$freq, "): ", sep="")),
+            tags$td(paste(regr$capm_ret, "%", sep="")) ),
+          tags$tr(
+            tags$td(paste("Fama-French 3 Factor required return (", input$freq, "): ", sep="")),
+            tags$td(paste(regr$ff3_ret, "%", sep="")) ),
+          tags$tr(
+            tags$td(paste("Sharpe ratio (", input$freq, "): ",  sep="")),
+            tags$td(p("N/A", style="display: inline")) ),
+          tags$tr(
+            tags$td(paste("Sortino ratio (", input$freq, "): ",  sep="")),
+            tags$td("N/A") ),
+          tags$tr(
+            tags$td(paste("Market beta (", input$freq, "): ",  sep="")),
+            tags$td(regr$mkt_beta) ), 
+          tags$tr(
+            tags$td(paste("SMB beta (", input$freq, "): ",  sep="")),
+            tags$td(regr$smb_beta) ), 
+          tags$tr(
+            tags$td(paste("HML beta (", input$freq, "): ",  sep="")),
+            tags$td(regr$hml_beta) )
+        ) ) # end table
+    ) # end div
+  }) # end renderUI
+
+  output$table_head <- renderTable({
+    combined_disp()$head    
+  },
+  include.rownames = FALSE)
+  
+  output$table_tail <- renderTable({
+    if (length(combined_disp()) == 2) {# ie. tail table exists
+      combined_disp()$tail 
+    }
+  },
+  include.rownames = FALSE,
+  include.colnames = FALSE)
 })
