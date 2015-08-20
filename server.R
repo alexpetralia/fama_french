@@ -10,12 +10,6 @@ library(e1071)
 library(gridExtra)
 library(lubridate)
 library(magrittr)
-
-#####################################
-#       SERVER-SIDE (LINUX EC2)     #
-#####################################
-
-#   setwd("/var/shiny-server/www/fama_french/")
   
   ##########################
   #       DEBUGGING        #
@@ -69,8 +63,7 @@ shinyServer(function(input, output) {
       month_ends <- sapply(data$Date, getEndOfMonth, calendar = "UnitedStates/NYSE")
       data$Date <- as.character(as.Date(month_ends, origin = "1970-01-01")) # drop timestamps
       data$Date <- as.POSIXct(data$Date, format = "%Y-%m-%d")
-    } else {
-      data$Date <- as.POSIXct(as.character(data$Date), format = "%Y%m%d") }
+    } else { data$Date <- as.POSIXct(as.character(data$Date), format = "%Y%m%d") }
     
     data[,-1] <- data[,-1] / 100 # convert from percent to decimal
     return(data)
@@ -88,7 +81,6 @@ shinyServer(function(input, output) {
   # COMBINE FF AND STOCK INTO MASTER DF
   unannualized <- reactive({
     data <- merge(x = FF(), y = stock(), by = "Date", all.x = TRUE) # LEFT OUTER JOIN
-    # data <- truncate(data, input$ret_period[[1]], input$ret_period[[2]])
     
     names(data)[names(data) == "Adj.Close"] <- "stock"
     data[, "stock"] <- Delt(data[, "stock"], type="arithmetic") # convert to % returns
@@ -144,8 +136,8 @@ shinyServer(function(input, output) {
   })
 
   regression_annualized <- reactive({ # for annualized financial table
-    betas <- regression()[[2]]
-    df <- annualized()   
+    betas <- regression()[[2]] # stats variable
+    df <- annualized()
     
     # risk premia time period #
     df <- truncate(df, input$rp_period[[1]], input$rp_period[[2]])
@@ -163,9 +155,7 @@ shinyServer(function(input, output) {
   })
 
   calculate_unannualized <- reactive({ # mean, median and stdev should be converted to percentages
-    df <- unannualized()
-    df <- truncate(df, input$ret_period[[1]], input$ret_period[[2]])
-    
+    df <- unannualized_subset()
     stock_stats <- c("mean" = mean(df$stock)*100, 
                      "median" = median(df$stock)*100, 
                      "stdev" = sd(df$stock)*100, 
@@ -173,15 +163,12 @@ shinyServer(function(input, output) {
                      "e.kurtosis" = kurtosis(df$stock),
                      "sharpe" = mean(df$stock.Excess) / sd(df$stock),
                      "sortino" = mean(df$stock.Excess) / sd(df$stock[df$stock < 0]) )
-    
     return(stock_stats)
   })
 
   calculate_annualized <- reactive({ 
     # SELECTED STOCK #    
-    df <- annualized()
-    df <- truncate(df, input$ret_period[[1]], input$ret_period[[2]])
-    
+    df <- truncate(annualized(), input$ret_period[[1]], input$ret_period[[2]])
     stock_stats <- c("mean" = mean(df$stock)*100, 
                "median" = median(df$stock)*100, 
                "stdev" = sd(df$stock)*100, 
@@ -193,7 +180,7 @@ shinyServer(function(input, output) {
     # S&P 500 #
     data <- snp_tickers
     
-    idx_mean <- sapply(data[2:length(data)], mean, na.rm = TRUE)*100 # this yields 500 tickers of stock statistics
+    idx_mean <- sapply(data[2:length(data)], mean, na.rm = TRUE)*100 # yields 500 means of annualized stock returns
     idx_median <- sapply(data[2:length(data)], median, na.rm = TRUE)*100
     idx_stdev <- sapply(data[2:length(data)], sd, na.rm = TRUE)*100
     idx_skewness <- sapply(data[2:length(data)], skewness, na.rm = TRUE)
@@ -201,8 +188,7 @@ shinyServer(function(input, output) {
     
     # PERCENTILES #
     perc.rank <- function(x, y) { length(x[x <= y])/length(x)*100 } 
-    
-    percentile <- c("mean" = perc.rank(idx_mean, stock_stats['mean']), # this is not correct
+    percentile <- c("mean" = perc.rank(idx_mean, stock_stats['mean']),
       "median" = perc.rank(idx_median, stock_stats['median']),
       "stdev" = perc.rank(idx_stdev, stock_stats['stdev']),
       "skewness" = perc.rank(idx_skewness, stock_stats['skewness']),
