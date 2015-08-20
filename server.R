@@ -56,7 +56,7 @@ library(magrittr)
 
 daily <-  read.csv("FF_daily.CSV")
 monthly <- read.csv("FF_monthly.CSV")
-snp_tickers <- read.csv("snp_tickers.CSV")
+snp_tickers <- read.csv("snp_tickers.csv")
 
 shinyServer(function(input, output) {
   
