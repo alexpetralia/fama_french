@@ -15,7 +15,7 @@ library(magrittr)
 #       SERVER-SIDE (LINUX EC2)     #
 #####################################
 
-  setwd("/var/shiny-server/www/fama_french/")
+#   setwd("/var/shiny-server/www/fama_french/")
   
   ##########################
   #       DEBUGGING        #
@@ -56,7 +56,7 @@ library(magrittr)
 
 daily <-  read.csv("FF_daily.CSV")
 monthly <- read.csv("FF_monthly.CSV")
-snp_tickers <- read.csv("snp_tickers.csv")
+snp_tickers <- read.csv("snp_tickers.CSV")
 
 shinyServer(function(input, output) {
   

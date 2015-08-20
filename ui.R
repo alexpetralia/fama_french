@@ -23,11 +23,15 @@ shinyUI(fluidPage(
         
     textInput("ticker", h3("Security ticker"), value="LMT"),
     
+    br(),
+    
     radioButtons("freq", h3("Frequency"),
                    c("Daily" = "daily",
                    "Monthly" = "monthly"),
                  inline = TRUE,
                  selected = "monthly"),
+    
+    br(),
     
     h3("Time period for the..."),
     
@@ -45,12 +49,16 @@ shinyUI(fluidPage(
                 value = c(2010,2015),
                 sep = ""),
     
+    code("recommended: 5 year interval"),
+    
     sliderInput("rp_period", h4("risk premia calculations"),
                 min = 1920,
                 max = 2020,
                 step = 1,
                 value = c(1995,2015),
                 sep = ""),
+    
+    code("recommended: 20 year interval"),
     
     br(),
     width = 3
