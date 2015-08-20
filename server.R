@@ -11,11 +11,11 @@ library(gridExtra)
 library(lubridate)
 library(magrittr)
 
-daily <-  read.csv("FF_daily.CSV")
-monthly <- read.csv("FF_monthly.CSV")
-snp_tickers <- read.csv("snp_tickers.CSV")
+#####################################
+#       SERVER-SIDE (LINUX EC2)     #
+#####################################
 
-shinyServer(function(input, output) {
+  setwd("/var/shiny-server/www/fama_french/")
   
   ##########################
   #       DEBUGGING        #
@@ -25,12 +25,6 @@ shinyServer(function(input, output) {
 #   beg <- "1990-01-01"
 #   end <- "2012-12-31"
 #   fname <- "FF_monthly.CSV"
-
-  #####################################
-  #       SERVER-SIDE (LINUX EC2)     #
-  #####################################
-
-#   setwd("/var/shiny-server/www/fama_french/")
 
   ####################
   #     OVERHEAD     #
@@ -59,6 +53,12 @@ shinyServer(function(input, output) {
   ##########################
   #       PROCESSING       #
   ##########################
+
+daily <-  read.csv("FF_daily.CSV")
+monthly <- read.csv("FF_monthly.CSV")
+snp_tickers <- read.csv("snp_tickers.CSV")
+
+shinyServer(function(input, output) {
   
   # CHANGE FREQUENCY OF FF DATA
   FF <- reactive({
