@@ -8,6 +8,12 @@ library(RQuantLib)
 library(quantmod)
 library(e1071)
 library(gridExtra)
+library(lubridate)
+library(magrittr)
+
+daily <-  read.csv("FF_daily.CSV")
+monthly <- read.csv("FF_monthly.CSV")
+snp_tickers <- read.csv("snp_tickers.CSV")
 
 shinyServer(function(input, output) {
   
@@ -25,6 +31,30 @@ shinyServer(function(input, output) {
   #####################################
 
 #   setwd("/var/shiny-server/www/fama_french/")
+
+  ####################
+  #     OVERHEAD     #
+  ####################
+
+  truncate <- function(df, x, y) {
+    if (!is(df[,1], "POSIXct")) { # if annualized, convert from numeric to POSIXct
+      df[,1] <- sapply(df[,1], function (x) { paste(as.character(x), '0102', sep="")})
+      df[,1] <- as.POSIXct(df[,1], format = "%Y%m%d") }
+    beg_in <- as.POSIXct(paste(as.character(x), '0101', sep=""), format = "%Y%m%d")
+    end_in <- as.POSIXct(paste(as.character(y), '1231', sep=""), format = "%Y%m%d")
+    df <- df[df$Date %between% c(beg_in, end_in), ]
+    df$Date <- format(df$Date, "%Y-%m-%d") # convert back to string
+    return(df)
+  }
+  
+  ggplot_theme <- theme( 
+    panel.background = element_rect(fill = '#F3ECE2'), 
+    plot.background = element_rect(fill = '#F3ECE2'), 
+    panel.grid.major = element_line(color = "#DFDDDA"), 
+    panel.grid.minor = element_line(color = "#DFDDDA"),
+    axis.title.x = element_text(color = "#B2B0AE"),
+    axis.title.y = element_text(color = "#B2B0AE"),
+    title = element_text(color = "#606060") )
   
   ##########################
   #       PROCESSING       #
@@ -32,8 +62,7 @@ shinyServer(function(input, output) {
   
   # CHANGE FREQUENCY OF FF DATA
   FF <- reactive({
-    fname <- paste("FF_", input$freq, ".CSV", sep="")
-    data <- read.csv(fname)
+    data <- get(input$freq)
     
     if (input$freq == "monthly") { # ascribe end of month trading date to Monthly data
       data$Date <- as.Date(paste(as.character(data$Date), 01, sep=""), format = "%Y%m%d")
@@ -47,45 +76,53 @@ shinyServer(function(input, output) {
     return(data)
   })
   
-#   # CHANGE REAL/NOMINAL OF DATA
-#   FF_real <- reactive({
-#     infl <- input$inflation
-#   })
-  
   # PULL STOCK DATA
   stock <- reactive({
-    beg <- paste(as.character(input$period[[1]]), '-01-01', sep = "")
-    end <- paste(as.character(input$period[[2]]), '-12-31', sep = "")
-    stock <- getReturns(input$ticker, freq="day", get="overlapOnly", start=beg, end=end)
+    stock <- getReturns(input$ticker, freq="day", get="overlapOnly", start="1920-01-01")
     close <- stock$full[[1]][,c(1, 7)]
     close$Date <- as.POSIXct(close$Date)
     close <- close[order(close$Date), ]
-    
     return(close)
   })
   
   # COMBINE FF AND STOCK INTO MASTER DF
-  combined <- reactive({
-    df <- merge(x = FF(), y = stock(), by = "Date", all.x = TRUE) # LEFT OUTER JOIN
+  unannualized <- reactive({
+    data <- merge(x = FF(), y = stock(), by = "Date", all.x = TRUE) # LEFT OUTER JOIN
+    # data <- truncate(data, input$ret_period[[1]], input$ret_period[[2]])
     
-    beg <- as.POSIXct(paste(as.character(input$period[[1]]), '0101'), format = "%Y%m%d")
-    end <- as.POSIXct(paste(as.character(input$period[[2]]), '1231'), format = "%Y%m%d")
-    data <- df[df$Date %between% c(beg, end), ] # to subset FF data
-    data$Date <- format(data$Date, "%Y-%m-%d")
-      
-    data[, "Adj.Close"] <- Delt(data[, "Adj.Close"], type="arithmetic") # convert to % returns
-    data <- na.omit(data)
     names(data)[names(data) == "Adj.Close"] <- "stock"
-    data$stock <- data$stock[1:length(data$stock)]
+    data[, "stock"] <- Delt(data[, "stock"], type="arithmetic") # convert to % returns
+    data$stock <- data$stock[1:length(data$stock)] # Delt.1.arithmetic is trapped inside an object
+    data <- na.omit(data)
     
-    data['Mkt.Excess'] = data['Mkt.RF'] - data['RF']
+    data['Mkt.Excess'] = data['Mkt.RF'] - data['RF'] # using non-annualized data
     data['stock.Excess'] = data['stock'] - data['RF']
-    
     return(data)
   })
 
-  regression <- reactive({
-    data <- combined()
+  unannualized_subset <- reactive({
+    return( truncate(unannualized(), input$ret_period[[1]], input$ret_period[[2]]) ) })
+
+  annualized <- reactive({
+    data <- unannualized()
+    
+    product = function(x, na.rm=TRUE){ prod(x+1)-1 }
+    # data.table uses references, not copies by default. must explicitly copy.
+    df <- setDT(copy(data))[, lapply(.SD, product), by=.(year(Date))] %>% as.data.frame()
+    setnames(df, "year", "Date")
+    
+    df['Mkt.Excess'] = df['Mkt.RF'] - df['RF'] # reassign these columns using annualized data
+    df['stock.Excess'] = df['stock'] - df['RF']
+    return(df)
+  })
+
+  dates_out <- reactive({ # for histogram title
+    data <- truncate(unannualized(), input$ret_period[[1]], input$ret_period[[2]])
+    return(list( year(data[1,"Date"]) , year(data[nrow(data),"Date"]) )) })  
+
+  regression <- reactive({ # for unannualized scatterplots and beta calculations
+    data <- unannualized()
+    data <- truncate(data, input$beta_period[[1]], input$beta_period[[2]])
     
     mkt_regr <- lm(data[,"stock.Excess"] ~ data[,"Mkt.Excess"], na.action=na.omit)
     mkt_alpha <- mkt_regr$coef[1]
@@ -102,34 +139,225 @@ shinyServer(function(input, output) {
     hml_beta <- hml_regr$coef[2]
     hml_r2 <- summary(hml_regr)$r.squared
     
-    mkt_factor_prem <- mean(data[, "Mkt.Excess"])
-    smb_factor_prem <- mean(data[, "SMB"])
-    hml_factor_prem <- mean(data[, "HML"])
-    
-    rf_avg <- mean(data[, "RF"]) # THIS SHOULD BE CURRENT RF VALUE, NOT AN AVERAGE
-    
-    ff3_ret <- rf_avg + (mkt_beta*mkt_factor_prem) + (smb_beta*smb_factor_prem) + (hml_beta*hml_factor_prem)
-    capm_ret <- rf_avg + (mkt_beta*mkt_factor_prem)
-    
-    stats <- list("ff3_ret" = ff3_ret*100, "capm_ret" = capm_ret*100, "rf" = rf_avg, "mkt_beta" = mkt_beta, "smb_beta" = smb_beta, "hml_beta" = hml_beta, "mkt_alpha" = mkt_alpha, "mkt_r2" = mkt_r2, "smb_alpha" = smb_alpha, "smb_r2" = smb_r2, "hml_alpha" = hml_alpha, "hml_r2" = hml_r2) # convert to percentages    
-    stats_rd <- lapply(stats, function(x){ format(round(x, 2), nsmall = 2) })
-    
-    return(stats_rd)
-    
-    # a measure for momentum? google it. google other important financial ratios //////////////////////////////
-    # cokurtosis? coskewness?
-    # model efficacy for fama-french? r^2?
-    # add real/nominal functionality  //////////////////////////////
+    stats <- list("mkt_beta" = mkt_beta, "smb_beta" = smb_beta, "hml_beta" = hml_beta, "mkt_alpha" = mkt_alpha, "mkt_r2" = mkt_r2, "smb_alpha" = smb_alpha, "smb_r2" = smb_r2, "hml_alpha" = hml_alpha, "hml_r2" = hml_r2)
+    return(list(data, stats))    
   })
 
-  combined_disp <- reactive({
-    data <- combined()
+  regression_annualized <- reactive({ # for annualized financial table
+    betas <- regression()[[2]]
+    df <- annualized()   
+    
+    # risk premia time period #
+    df <- truncate(df, input$rp_period[[1]], input$rp_period[[2]])
+    mkt_factor_prem <- mean(df[, "Mkt.Excess"])
+    smb_factor_prem <- mean(df[, "SMB"])
+    hml_factor_prem <- mean(df[, "HML"])
+    rf_t <- df[nrow(df), "RF"]
+    
+    # calculate #
+    ff3_ret <- rf_t+(betas$mkt_beta*mkt_factor_prem)+(betas$smb_beta*smb_factor_prem)+(betas$hml_beta*hml_factor_prem)
+    capm_ret <- rf_t+(betas$mkt_beta*mkt_factor_prem)
+    
+    metrics <- list("ff3_ret" = ff3_ret, "capm_ret" = capm_ret, "rf" = rf_t)
+    return(metrics)
+  })
+
+  calculate_unannualized <- reactive({ # mean, median and stdev should be converted to percentages
+    df <- unannualized()
+    df <- truncate(df, input$ret_period[[1]], input$ret_period[[2]])
+    
+    stock_stats <- c("mean" = mean(df$stock)*100, 
+                     "median" = median(df$stock)*100, 
+                     "stdev" = sd(df$stock)*100, 
+                     "skewness" = skewness(df$stock), 
+                     "e.kurtosis" = kurtosis(df$stock),
+                     "sharpe" = mean(df$stock.Excess) / sd(df$stock),
+                     "sortino" = mean(df$stock.Excess) / sd(df$stock[df$stock < 0]) )
+    
+    return(stock_stats)
+  })
+
+  calculate_annualized <- reactive({ 
+    # SELECTED STOCK #    
+    df <- annualized()
+    df <- truncate(df, input$ret_period[[1]], input$ret_period[[2]])
+    
+    stock_stats <- c("mean" = mean(df$stock)*100, 
+               "median" = median(df$stock)*100, 
+               "stdev" = sd(df$stock)*100, 
+               "skewness" = skewness(df$stock), 
+               "e.kurtosis" = kurtosis(df$stock),
+               "sharpe" = mean(df$stock.Excess) / sd(df$stock),
+               "sortino" = mean(df$stock.Excess) / sd(df$stock[df$stock < 0]) )
+    
+    # S&P 500 #
+    data <- snp_tickers
+    
+    idx_mean <- sapply(data[2:length(data)], mean, na.rm = TRUE)*100 # this yields 500 tickers of stock statistics
+    idx_median <- sapply(data[2:length(data)], median, na.rm = TRUE)*100
+    idx_stdev <- sapply(data[2:length(data)], sd, na.rm = TRUE)*100
+    idx_skewness <- sapply(data[2:length(data)], skewness, na.rm = TRUE)
+    idx_e.kurtosis <- sapply(data[2:length(data)], kurtosis, na.rm = TRUE)
+    
+    # PERCENTILES #
+    perc.rank <- function(x, y) { length(x[x <= y])/length(x)*100 } 
+    
+    percentile <- c("mean" = perc.rank(idx_mean, stock_stats['mean']), # this is not correct
+      "median" = perc.rank(idx_median, stock_stats['median']),
+      "stdev" = perc.rank(idx_stdev, stock_stats['stdev']),
+      "skewness" = perc.rank(idx_skewness, stock_stats['skewness']),
+      "e.kurtosis" = perc.rank(idx_e.kurtosis, stock_stats['e.kurtosis']) )
+    
+    return(list("stock" = stock_stats, "percentile" = percentile))
+  })
+
+  ######################
+  #      OUTPUTS       #
+  ######################
+
+  # PLOTS DISPLAY #
+  
+  output$histogram <- renderPlot({ 
+    
+    p <- ggplot(unannualized_subset(), aes(x = stock)) + 
+      geom_histogram(binwidth=.005, fill = "#383837") + 
+      geom_density(color="blue", fill="white", alpha=.03) + 
+      scale_x_continuous(labels=percent) + 
+      scale_y_discrete(breaks=pretty_breaks()) + 
+      labs(x = paste(toupper(input$ticker), " returns"), y = "observations",
+           title = paste(toupper(input$ticker), " ", input$freq, " returns distribution (", dates_out()[[1]], " to ", dates_out()[[2]], ")\n", sep="")) + 
+      ggplot_theme
+    print(p)
+  })
+
+  output$scatterplot <- renderPlot({
+    regr <- regression()[[2]]
+    regr_rd <- lapply(regr, function(x){ format(round(x, 2), nsmall = 2) })
+    ticker <- toupper(input$ticker)
+    
+    mkt_plot <- ggplot(regression()[[1]], aes(x = Mkt.Excess, y = stock.Excess)) + geom_point(color = "#383837", alpha=.8) +
+      geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) +
+      scale_x_continuous(labels=percent) + 
+      scale_y_continuous(labels=percent) + 
+      labs(title = paste(ticker, " vs. market returns (", input$freq, ")\n", sep=""),
+           x = paste("excess market returns\n\n", "model: y = ", regr_rd$mkt_alpha, " + ", regr_rd$mkt_beta, "x + (e) | R^2 = ", regr_rd$mkt_r2, sep =""), 
+           y = paste("excess", ticker, "returns")) + 
+      ggplot_theme
+    
+    smb_plot <- ggplot(regression()[[1]], aes(x = SMB, y = stock.Excess)) + geom_point(color = "#383837", alpha=.8) +
+      geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) + 
+      scale_x_continuous(labels=percent) + 
+      scale_y_continuous(labels=percent) + 
+      labs(title = paste(ticker, " vs. SMB returns (", input$freq, ")\n", sep=""),
+           x = paste("SMB returns\n\n", "model: y = ", regr_rd$smb_alpha, " + ", regr_rd$smb_beta, "x + (e) | R^2 = ", regr_rd$smb_r2, sep =""), 
+           y = paste("excess", ticker, "returns")) + 
+      ggplot_theme
+    
+    hml_plot <- ggplot(regression()[[1]], aes(x = HML, y = stock.Excess)) + geom_point(color = "#383837", alpha=.8) +
+      geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) + 
+      scale_x_continuous(labels=percent) + 
+      scale_y_continuous(labels=percent) + 
+      labs(title = paste(ticker, " vs. HML returns (", input$freq, ")\n", sep=""),
+           x = paste("HML returns\n\n", "model: y = ", regr_rd$hml_alpha, " + ", regr_rd$hml_beta, "x + (e) | R^2 = ", regr_rd$hml_r2, sep =""), 
+           y = paste("excess", ticker, "returns")) + 
+      ggplot_theme
+    
+    grid.arrange(mkt_plot, smb_plot, hml_plot, ncol=3)
+  })
+
+  # METRICS DISPLAY #
+
+  output$metrics_stats <- renderUI({
+    stock_unannualized <- calculate_unannualized()
+    stock_annualized <- calculate_annualized()$stock
+    percentile <- calculate_annualized()$percentile
+    
+    stock_unannualized_rd <- lapply(stock_unannualized, function(x) { format(round(x, 2), nsmall = 2) })
+    stock_annualized_rd <- lapply(stock_annualized, function(x) { format(round(x, 2), nsmall = 2) })
+    percentile_rd <- lapply(percentile, function(x) { format(round(x, 1), nsmall = 1) })
+    
+    div(         
+      strong(h3("Measures of central tendency")),
+      
+      tags$table(
+        tags$thead(
+          tags$tr(
+            tags$td(""),
+            tags$td(HTML(paste(strong(toupper(input$ticker)),  " (", input$freq, ")", sep=""))),
+            tags$td(HTML(paste(strong(toupper(input$ticker)),  "(annualized)"))), 
+            tags$td(HTML(paste(strong("Percentile among",br(),"current S&P 500 stocks"),"(annualized)")) ))
+        ),
+        tags$tbody(
+          tags$tr(
+            tags$td("Mean"),
+            tags$td(paste(stock_unannualized_rd['mean'], "%", sep="")),
+            tags$td(paste(stock_annualized_rd['mean'], "%", sep="")),
+            tags$td(paste(percentile_rd['mean'], "%", sep="")) ),
+          tags$tr(
+            tags$td("Median"),
+            tags$td(paste(stock_unannualized_rd['median'], "%", sep="")),
+            tags$td(paste(stock_annualized_rd['median'], "%", sep="")),
+            tags$td(paste(percentile_rd['median'], "%", sep="")) ),
+          tags$tr(
+            tags$td("Standard deviation"),
+            tags$td(paste(stock_unannualized_rd['stdev'], "%", sep="")),
+            tags$td(paste(stock_annualized_rd['stdev'], "%", sep="")),
+            tags$td(paste(percentile_rd['stdev'], "%", sep="")) ),
+          tags$tr(
+            tags$td("Skewness"),
+            tags$td(stock_unannualized_rd['skewness']),
+            tags$td(stock_annualized_rd['skewness']),
+            tags$td(paste(percentile_rd['skewness'], "%", sep="")) ),
+          tags$tr(
+            tags$td("Excess kurtosis"),
+            tags$td(stock_unannualized_rd['e.kurtosis']),
+            tags$td(stock_annualized_rd['e.kurtosis']),
+            tags$td(paste(percentile_rd['e.kurtosis'], "%", sep="")) )
+          ) ) # end table
+    ) # end div
+  }) # end renderUI
+
+  output$metrics_finance <- renderUI({
+    stock <- calculate_annualized()$stock
+    stock_rd <- lapply(stock, function(x) { format(round(x, 2), nsmall = 2) })
+    
+    regr <- regression_annualized()
+    regr$capm_ret <- regr$capm_ret*100; regr$ff3_ret <- regr$ff3_ret*100 # turn to %
+    regr_rd <- lapply(regr, function(x) { format(round(x, 2), nsmall = 2) })
+    
+    div(
+      strong(h3("Financial metrics (annualized)")),
+      
+      tags$table(
+        tags$tbody(
+          tags$tr(
+            tags$td("CAPM required return"),
+            tags$td(paste(regr_rd$capm_ret, "%", sep="")) ),
+          tags$tr(
+            tags$td("Fama-French 3 Factor required return"),
+            tags$td(paste(regr_rd$ff3_ret, "%", sep="")) ),
+          tags$tr(
+            tags$td("Sharpe ratio"),
+            tags$td(stock_rd$sharpe) ),
+          tags$tr(
+            tags$td("Sortino ratio"),
+            tags$td(stock_rd$sortino) )
+        ) ), # end table
+      br()
+    ) # end div
+  }) # end renderUI
+
+  # TABLES DISPLAY #
+
+  unannualized_disp <- reactive({
+    data <- unannualized_subset()
+    
     data$stock.Excess <- NULL
     data$Mkt.Excess <- NULL
     
-    names(data)[names(data) == "stock"] <- input$ticker
-    names(data)[names(data) == "Mkt.RF"] <- "Market"
-    names(data)[names(data) == "RF"] <- "Risk-free"
+    setnames(data, "stock", toupper(input$ticker))
+    setnames(data, "Mkt.RF", "Market")
+    setnames(data, "RF", "Risk-free")
     
     data[,2:6] <- sapply(data[,2:6], function(x) { 
       paste(format(round(x * 100, 2), nsmall=2), "%", sep="") })
@@ -149,134 +377,35 @@ shinyServer(function(input, output) {
     return(both)    
   })
 
-  ######################
-  #      THEMES        #
-  ######################
-
-  ggplot_theme <- theme( # https://github.com/jrnold/ggthemes
-    panel.background = element_rect(fill = '#F3ECE2'), 
-    plot.background = element_rect(fill = '#F3ECE2'), 
-    panel.grid.major = element_line(color = "#DFDDDA"), 
-    panel.grid.minor = element_line(color = "#DFDDDA"),
-    axis.title.x = element_text(color = "#B2B0AE"),
-    axis.title.y = element_text(color = "#B2B0AE") )
-
-  ######################
-  #      OUTPUTS       #
-  ######################
-  
-  output$histogram <- renderPlot({
-    p <- ggplot(combined(), aes(x = stock)) + 
-      geom_histogram(binwidth=.005, fill = "#383837") + 
-      geom_density(color="blue", fill="white", alpha=.03) + 
-      scale_x_continuous(labels=percent) + 
-      scale_y_discrete(breaks=pretty_breaks()) + 
-      labs(x = paste(input$ticker, " returns"), y = "observations") + 
-      ggplot_theme
-    print(p)
-  })
-
-  output$scatterplot <- renderPlot({
-    regr <- regression()
-    
-    mkt_plot <- ggplot(combined(), aes(x = Mkt.Excess, y = stock.Excess)) + geom_point(color = "#383837") +
-      geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) +
-      scale_x_continuous(labels=percent) + 
-      scale_y_continuous(labels=percent) + 
-      labs(x = paste("excess market returns\n\n", "model: y = ", regr$mkt_alpha, " + ", regr$mkt_beta, "x + (e) | R^2 = ", regr$mkt_r2, sep =""), 
-           y = paste("excess", input$ticker, "returns")) + 
-      ggplot_theme
-    
-    smb_plot <- ggplot(combined(), aes(x = SMB, y = stock.Excess)) + geom_point(color = "#383837") +
-      geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) + 
-      scale_x_continuous(labels=percent) + 
-      scale_y_continuous(labels=percent) + 
-      labs(x = paste("SMB returns\n\n", "model: y = ", regr$smb_alpha, " + ", regr$smb_beta, "x + (e) | R^2 = ", regr$smb_r2, sep =""), 
-           y = paste("excess", input$ticker, "returns")) + 
-      ggplot_theme
-    
-    hml_plot <- ggplot(combined(), aes(x = HML, y = stock.Excess)) + geom_point(color = "#383837") +
-      geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) + 
-      scale_x_continuous(labels=percent) + 
-      scale_y_continuous(labels=percent) + 
-      labs(x = paste("HML returns\n\n", "model: y = ", regr$hml_alpha, " + ", regr$hml_beta, "x + (e) | R^2 = ", regr$hml_r2, sep =""), 
-           y = paste("excess", input$ticker, "returns")) + 
-      ggplot_theme
-    
-    grid.arrange(mkt_plot, smb_plot, hml_plot, ncol=3)
-  })
-
-  output$metrics <- renderUI({
-    regr <- regression()
-        
-    stock <- combined()$stock
-    stats <- c("mean" = mean(stock)*100, "median" = median(stock)*100, "stdev" = sd(stock)*100, "skewness" = skewness(stock), "kurtosis" = kurtosis(stock)-3) # convert to percentages
-    stats_rd <- lapply(stats, function(x){ format(round(x, 2), nsmall = 2) })
-  
-    div(   
-      strong(p("Measures of central tendency")),
-      
-      tags$table(
-        tags$tbody(
-          tags$tr(
-            tags$td(paste("Mean (", input$freq, "): ", sep="")),
-            tags$td(paste(stats_rd$mean, "%", sep="")) ),
-          tags$tr(
-            tags$td(paste("Median (", input$freq, "): ", sep="")),
-            tags$td(paste(stats_rd$median, "%", sep="")) ),
-          tags$tr(
-            tags$td(paste("Standard deviation (", input$freq, "): ",  sep="")),
-            tags$td(paste(stats_rd$stdev, "%", sep="")) ),
-          tags$tr(
-            tags$td(paste("Skewness (", input$freq, "): ",  sep="")),
-            tags$td(stats_rd$skewness) ),
-          tags$tr(
-            tags$td(paste("Excess kurtosis (", input$freq, "): ",  sep="")),
-            tags$td(stats_rd$kurtosis) )
-          )
-        ),
-      
-      br(),
-      
-      strong(p("Financial metrics")),
-      
-      tags$table(
-        tags$tbody(
-          tags$tr(
-            tags$td(paste("CAPM required return (", input$freq, "): ", sep="")),
-            tags$td(paste(regr$capm_ret, "%", sep="")) ),
-          tags$tr(
-            tags$td(paste("Fama-French 3 Factor required return (", input$freq, "): ", sep="")),
-            tags$td(paste(regr$ff3_ret, "%", sep="")) ),
-          tags$tr(
-            tags$td(paste("Sharpe ratio (", input$freq, "): ",  sep="")),
-            tags$td(p("N/A", style="display: inline")) ),
-          tags$tr(
-            tags$td(paste("Sortino ratio (", input$freq, "): ",  sep="")),
-            tags$td("N/A") ),
-          tags$tr(
-            tags$td(paste("Market beta (", input$freq, "): ",  sep="")),
-            tags$td(regr$mkt_beta) ), 
-          tags$tr(
-            tags$td(paste("SMB beta (", input$freq, "): ",  sep="")),
-            tags$td(regr$smb_beta) ), 
-          tags$tr(
-            tags$td(paste("HML beta (", input$freq, "): ",  sep="")),
-            tags$td(regr$hml_beta) )
-        ) ) # end table
-    ) # end div
-  }) # end renderUI
-
   output$table_head <- renderTable({
-    combined_disp()$head    
+    unannualized_disp()$head    
   },
   include.rownames = FALSE)
   
   output$table_tail <- renderTable({
-    if (length(combined_disp()) == 2) {# ie. tail table exists
-      combined_disp()$tail 
+    if (length(unannualized_disp()) == 2) { # ie. tail table exists
+      unannualized_disp()$tail 
     }
   },
   include.rownames = FALSE,
   include.colnames = FALSE)
+
+  annualized_disp <- reactive({
+    data <- annualized()
+    data <- truncate(data, input$ret_period[[1]], input$ret_period[[2]])
+    data$Date <- sapply(strsplit(data$Date, "-"), '[', 1)
+    data$stock.Excess <- NULL
+    data$Mkt.Excess <- NULL
+    setnames(data, "stock", toupper(input$ticker))
+    setnames(data, "Mkt.RF", "Market")
+    setnames(data, "RF", "Risk-free")
+    data[,1] <- sapply(data[,1], function(x) { format(x, nsmall=0) })
+    data[,2:6] <- sapply(data[,2:6], function(x) { paste(format(round(x * 100, 2), nsmall=2), "%", sep="") })
+    return(data)
+  })
+
+  output$annualized_table <- renderTable({
+    annualized_disp()
+  },
+  include.rownames = FALSE)
 })
