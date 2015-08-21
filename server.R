@@ -263,7 +263,7 @@ shinyServer(function(input, output) {
     percentile_rd <- lapply(percentile, function(x) { format(round(x, 1), nsmall = 1) })
     
     div(         
-      strong(h3("Measures of central tendency")),
+      strong(h3("Measures of central tendency and dispersion")),
       
       tags$table(
         tags$thead(
