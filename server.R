@@ -14,11 +14,11 @@ library(magrittr)
   ##########################
   #       DEBUGGING        #
   ##########################
-  
-#   setwd("C:/Users/apetralia/Desktop/app")
-#   beg <- "1990-01-01"
-#   end <- "2012-12-31"
-#   fname <- "FF_monthly.CSV"
+
+#   beg <- "1990"
+#   beta_beg <- "2010"
+#   rp_beg <- "1995"
+#   end <- "2015"
 
   ####################
   #     OVERHEAD     #
@@ -26,7 +26,7 @@ library(magrittr)
 
   truncate <- function(df, x, y) {
     if (!is(df[,1], "POSIXct")) { # if annualized, convert from numeric to POSIXct
-      df[,1] <- sapply(df[,1], function (x) { paste(as.character(x), '0102', sep="")})
+      df[,1] <- sapply(df[,1], function (x) { paste(as.character(x), '0102', sep="") })
       df[,1] <- as.POSIXct(df[,1], format = "%Y%m%d") }
     beg_in <- as.POSIXct(paste(as.character(x), '0101', sep=""), format = "%Y%m%d")
     end_in <- as.POSIXct(paste(as.character(y), '1231', sep=""), format = "%Y%m%d")
@@ -87,7 +87,6 @@ shinyServer(function(input, output) {
     data$stock <- data$stock[1:length(data$stock)] # Delt.1.arithmetic is trapped inside an object
     data <- na.omit(data)
     
-    data['Mkt.Excess'] = data['Mkt.RF'] - data['RF'] # using non-annualized data
     data['stock.Excess'] = data['stock'] - data['RF']
     return(data)
   })
@@ -103,7 +102,6 @@ shinyServer(function(input, output) {
     df <- setDT(copy(data))[, lapply(.SD, product), by=.(year(Date))] %>% as.data.frame()
     setnames(df, "year", "Date")
     
-    df['Mkt.Excess'] = df['Mkt.RF'] - df['RF'] # reassign these columns using annualized data
     df['stock.Excess'] = df['stock'] - df['RF']
     return(df)
   })
@@ -116,7 +114,7 @@ shinyServer(function(input, output) {
     data <- unannualized()
     data <- truncate(data, input$beta_period[[1]], input$beta_period[[2]])
     
-    mkt_regr <- lm(data[,"stock.Excess"] ~ data[,"Mkt.Excess"], na.action=na.omit)
+    mkt_regr <- lm(data[,"stock.Excess"] ~ data[,"Mkt.RF"], na.action=na.omit)
     mkt_alpha <- mkt_regr$coef[1]
     mkt_beta <- mkt_regr$coef[2]
     mkt_r2 <- summary(mkt_regr)$r.squared
@@ -141,7 +139,7 @@ shinyServer(function(input, output) {
     
     # risk premia time period #
     df <- truncate(df, input$rp_period[[1]], input$rp_period[[2]])
-    mkt_factor_prem <- mean(df[, "Mkt.Excess"])
+    mkt_factor_prem <- mean(df[, "Mkt.RF"])
     smb_factor_prem <- mean(df[, "SMB"])
     hml_factor_prem <- mean(df[, "HML"])
     rf_t <- df[nrow(df), "RF"]
@@ -221,7 +219,7 @@ shinyServer(function(input, output) {
     regr_rd <- lapply(regr, function(x){ format(round(x, 2), nsmall = 2) })
     ticker <- toupper(input$ticker)
     
-    mkt_plot <- ggplot(regression()[[1]], aes(x = Mkt.Excess, y = stock.Excess)) + geom_point(color = "#383837", alpha=.8) +
+    mkt_plot <- ggplot(regression()[[1]], aes(x = Mkt.RF, y = stock.Excess)) + geom_point(color = "#383837", alpha=.8) +
       geom_smooth(method = 'lm', formula=y~x, alpha = 0, size = 1) +
       scale_x_continuous(labels=percent) + 
       scale_y_continuous(labels=percent) + 
@@ -311,6 +309,9 @@ shinyServer(function(input, output) {
     regr$capm_ret <- regr$capm_ret*100; regr$ff3_ret <- regr$ff3_ret*100 # turn to %
     regr_rd <- lapply(regr, function(x) { format(round(x, 2), nsmall = 2) })
     
+    regr_unannualized <- regression()[[2]]
+    regr_un_rd <- lapply(regr_unannualized, function(x){ format(round(x, 2), nsmall = 2) })
+    
     div(
       strong(h3("Financial metrics (annualized)")),
       
@@ -329,6 +330,32 @@ shinyServer(function(input, output) {
             tags$td("Sortino ratio"),
             tags$td(stock_rd$sortino) )
         ) ), # end table
+      
+      withMathJax(), # to display LaTeX-like formulas
+      
+      strong(h3(paste("Regression results (", input$freq, ")", sep=""))),
+      
+      tags$table(
+        tags$thead(
+          tags$tr(
+            tags$td(""),
+            tags$td(strong("Beta")),
+            tags$td(strong("R\\(^2\\)")) )
+        ),
+        tags$tbody(
+          tags$tr(
+            tags$td("Market factor"),
+            tags$td(regr_un_rd$mkt_beta),
+            tags$td(regr_un_rd$mkt_r2) ),
+          tags$tr(
+            tags$td("SMB factor"),
+            tags$td(regr_un_rd$smb_beta),
+            tags$td(regr_un_rd$smb_r2) ),
+          tags$tr(
+            tags$td("HML factor "),
+            tags$td(regr_un_rd$hml_beta),
+            tags$td(regr_un_rd$hml_r2) )
+        ) ), # end table
       br()
     ) # end div
   }) # end renderUI
@@ -337,9 +364,7 @@ shinyServer(function(input, output) {
 
   unannualized_disp <- reactive({
     data <- unannualized_subset()
-    
     data$stock.Excess <- NULL
-    data$Mkt.Excess <- NULL
     
     setnames(data, "stock", toupper(input$ticker))
     setnames(data, "Mkt.RF", "Market")
@@ -381,7 +406,6 @@ shinyServer(function(input, output) {
     data <- truncate(data, input$ret_period[[1]], input$ret_period[[2]])
     data$Date <- sapply(strsplit(data$Date, "-"), '[', 1)
     data$stock.Excess <- NULL
-    data$Mkt.Excess <- NULL
     setnames(data, "stock", toupper(input$ticker))
     setnames(data, "Mkt.RF", "Market")
     setnames(data, "RF", "Risk-free")

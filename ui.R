@@ -21,7 +21,7 @@ shinyUI(fluidPage(
   
   sidebarLayout(sidebarPanel(
         
-    textInput("ticker", h3("Security ticker"), value="LMT"),
+    textInput("ticker", h3("Security ticker"), value="SPY"),
     
     br(),
     
