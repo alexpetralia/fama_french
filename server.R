@@ -34,6 +34,8 @@ library(magrittr)
     df$Date <- format(df$Date, "%Y-%m-%d") # convert back to string
     return(df)
   }
+
+  product = function(x, na.rm=TRUE){ prod(x+1)-1 }
   
   ggplot_theme <- theme( 
     panel.background = element_rect(fill = '#F3ECE2'), 
@@ -97,12 +99,17 @@ shinyServer(function(input, output) {
   annualized <- reactive({
     data <- unannualized()
     
-    product = function(x, na.rm=TRUE){ prod(x+1)-1 }
     # data.table uses references, not copies by default. must explicitly copy.
     df <- setDT(copy(data))[, lapply(.SD, product), by=.(year(Date))] %>% as.data.frame()
     setnames(df, "year", "Date")
     
     df['stock.Excess'] = df['stock'] - df['RF']
+    return(df)
+  })
+  
+  annualized_FF <- reactive({
+    df <- setDT(copy(FF()))[, lapply(.SD, product), by=.(year(Date))] %>% as.data.frame()
+    setnames(df, "year", "Date")
     return(df)
   })
 
@@ -135,7 +142,7 @@ shinyServer(function(input, output) {
 
   regression_annualized <- reactive({ # for annualized financial table
     betas <- regression()[[2]] # stats variable
-    df <- annualized()
+    df <- annualized_FF() # risk premia should be based on original dataframe, not a merged one subset by stock period
     
     # risk premia time period #
     df <- truncate(df, input$rp_period[[1]], input$rp_period[[2]])
