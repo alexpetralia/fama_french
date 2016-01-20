@@ -1,6 +1,6 @@
-*A Dynamic Approach to Security Analysis
+##A Dynamic Approach to Security Analysis
 
-***<a href="http://52.2.13.97:3838/fama_french/" target="_blank">You can view this project live here.</a>***
+####**<a href="http://52.2.13.97:3838/fama_french/" target="_blank">You can view this project live here.</a>**
 
 The motivation for this project was to calculate and visualize important financial metrics for any publicly traded security. Traditionally, these calculations are performed in Excel. This process is time-consuming, error-prone and produces static output. To my knowledge, there is no freely available online application that allows various input assumptions to be flexibly changed. Leveraging R to automatically run these calculations yields useful financial information extremely quickly.
 
