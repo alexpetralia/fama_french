@@ -1,5 +1,6 @@
 shinyUI(fluidPage(
-  
+
+  shinyjs::useShinyjs(), # debugging
   withMathJax(), # to display LaTeX-like formulas
   
   tags$head( # CSS insert
@@ -8,9 +9,6 @@ shinyUI(fluidPage(
         padding-right: 10px;
         padding-left: 10px;
         border: 1px solid #d3d3d3;
-      }
-      border-color {
-        #d3d3d3
       }
     "))
   ),

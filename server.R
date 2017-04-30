@@ -24,6 +24,8 @@ library(magrittr)
   #     OVERHEAD     #
   ####################
 
+  body(getReturns)[[2]] <- substitute(startURL <- "https://ichart.finance.yahoo.com/table.csv?s=") # BUG, yahoo.finance API changed to use https -> need to change underlying library
+
   truncate <- function(df, x, y) {
     if (!is(df[,1], "POSIXct")) { # if annualized, convert from numeric to POSIXct
       df[,1] <- sapply(df[,1], function (x) { paste(as.character(x), '0102', sep="") })
@@ -209,7 +211,6 @@ shinyServer(function(input, output) {
   # PLOTS DISPLAY #
   
   output$histogram <- renderPlot({ 
-    
     p <- ggplot(unannualized_subset(), aes(x = stock)) + 
       geom_histogram(binwidth=.005, fill = "#383837") + 
       geom_density(color="blue", fill="white", alpha=.03) + 
@@ -222,6 +223,7 @@ shinyServer(function(input, output) {
   })
 
   output$scatterplot <- renderPlot({
+cat('got here', file=stderr())
     regr <- regression()[[2]]
     regr_rd <- lapply(regr, function(x){ format(round(x, 2), nsmall = 2) })
     ticker <- toupper(input$ticker)
